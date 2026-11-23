@@ -4,6 +4,7 @@ import { supabase } from './supabase';
 
 const WHATSAPP = '919307451094';
 const UPI_ID = 'Q801760632@ybl';
+const UPI_NAME = 'Chetan Kirana';
 
 const sampleProducts = [
   {id:'sample-1',name:'अंडे (6 पीस)',category:'डेयरी एवं अंडे',price:48,unit:'पैक',description:'ताज़े अंडे'},
@@ -22,6 +23,7 @@ function Storefront() {
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('सभी');
+
   const [form, setForm] = useState({
     name:'',
     mobile:'',
@@ -29,12 +31,13 @@ function Storefront() {
     note:'',
     payment:'COD'
   });
+
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-const [lastUpiOrder, setLastUpiOrder] = useState(null);
-const [utr, setUtr] = useState('');
-const [utrSubmitting, setUtrSubmitting] = useState(false);
+  const [lastUpiOrder, setLastUpiOrder] = useState(null);
+  const [utr, setUtr] = useState('');
+  const [utrSubmitting, setUtrSubmitting] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -190,16 +193,19 @@ const [utrSubmitting, setUtrSubmitting] = useState(false);
 
       setCart([]);
 
-if (form.payment === 'UPI') {
-  setLastUpiOrder({
-    orderNumber: data.order_number,
-    mobile: form.mobile.trim()
-  });
-  setUtr('');
-}
+      if (form.payment === 'UPI') {
+        setLastUpiOrder({
+          orderNumber:data.order_number,
+          mobile:form.mobile.trim(),
+          total:Number(data.total)
+        });
+        setUtr('');
+      } else {
+        setLastUpiOrder(null);
+      }
 
       setMessage(
-        `🎉 आपका ऑर्डर सफलतापूर्वक सेव हो गया! Order ID: ${data.order_number} | कुल राशि: ₹${data.total} | भुगतान: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI'}`
+        `🎉 आपका ऑर्डर सफलतापूर्वक सेव हो गया! Order ID: ${data.order_number} | कुल राशि: ₹${data.total} | भुगतान: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI - भुगतान सत्यापन बाकी'}`
       );
 
     } catch (error) {
@@ -210,39 +216,67 @@ if (form.payment === 'UPI') {
     }
   }
 
-async function submitUpiReference() {
-  if (!utr.trim()) {
-    return setMessage('कृपया UTR / Transaction ID भरें।');
-  }
-
-  setUtrSubmitting(true);
-  setMessage('');
-
-  const { data, error } = await supabase.rpc(
-    'submit_upi_reference',
-    {
-      p_order_number: lastUpiOrder.orderNumber,
-      p_mobile: lastUpiOrder.mobile,
-      p_reference: utr.trim()
+  async function submitUpiReference() {
+    if (!lastUpiOrder) {
+      return setMessage('ऑर्डर की जानकारी उपलब्ध नहीं है।');
     }
-  );
 
-  setUtrSubmitting(false);
+    const reference = utr.trim();
 
-  if (error) {
-    setMessage('UTR Submit Error: ' + error.message);
-    return;
+    if (!reference) {
+      return setMessage('कृपया UTR / Transaction ID भरें।');
+    }
+
+    if (reference.length < 6 || reference.length > 50) {
+      return setMessage('कृपया सही Transaction ID दर्ज करें।');
+    }
+
+    if (!supabase) {
+      return setMessage('Database कनेक्शन उपलब्ध नहीं है।');
+    }
+
+    setUtrSubmitting(true);
+    setMessage('');
+
+    try {
+      const {data,error} = await supabase.rpc(
+        'submit_upi_reference',
+        {
+          p_order_number:lastUpiOrder.orderNumber,
+          p_mobile:lastUpiOrder.mobile,
+          p_reference:reference
+        }
+      );
+
+      if (error) {
+        console.error('UTR submission error:',error);
+        setMessage('UTR Submit Error: ' + error.message);
+        return;
+      }
+
+      if (!data?.success) {
+        setMessage(data?.message || 'UTR जमा नहीं हुआ।');
+        return;
+      }
+
+      setMessage(
+        'आपका UTR सफलतापूर्वक जमा हो गया। भुगतान दुकान द्वारा Verify किया जाएगा।'
+      );
+
+      setLastUpiOrder(null);
+      setUtr('');
+
+    } catch (error) {
+      console.error(error);
+      setMessage('UTR जमा करते समय समस्या आई। कृपया दोबारा कोशिश करें।');
+    } finally {
+      setUtrSubmitting(false);
+    }
   }
 
-  if (!data?.success) {
-    setMessage(data?.message || 'UTR जमा नहीं हुआ।');
-    return;
-  }
-
-  setMessage('आपका UTR सफलतापूर्वक जमा हो गया। भुगतान दुकान द्वारा Verify किया जाएगा।');
-  setLastUpiOrder(null);
-  setUtr('');
-}
+  const upiLink = lastUpiOrder
+    ? `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&am=${encodeURIComponent(lastUpiOrder.total.toFixed(2))}&cu=INR&tn=${encodeURIComponent(lastUpiOrder.orderNumber)}`
+    : '';
 
   return <>
     <header>
@@ -454,12 +488,69 @@ async function submitUpiReference() {
           <p className="upi-note">
             UPI ID: <b>{UPI_ID}</b>
             <br/>
-            UPI भुगतान दुकान द्वारा अलग से Verify किया जाएगा।
-            ऑर्डर देने से भुगतान अपने आप Confirm नहीं होगा।
+            ऑर्डर देने के बाद UPI भुगतान करें और अपना UTR जमा करें।
+            भुगतान दुकान द्वारा जाँचने के बाद ही Confirm होगा।
           </p>
         }
 
         {message && <p className="notice">{message}</p>}
+
+        {lastUpiOrder &&
+          <div className="panel" style={{marginTop:'16px'}}>
+            <h3>UPI भुगतान पूरा करें</h3>
+
+            <p>
+              <b>Order ID:</b> {lastUpiOrder.orderNumber}
+            </p>
+
+            <p>
+              <b>भुगतान राशि:</b> ₹{lastUpiOrder.total.toFixed(2)}
+            </p>
+
+            <p>
+              <b>UPI ID:</b> {UPI_ID}
+            </p>
+
+            <a
+              href={upiLink}
+              className="place-order"
+              style={{
+                display:'block',
+                textAlign:'center',
+                textDecoration:'none',
+                marginBottom:'12px'
+              }}
+            >
+              PhonePe / UPI ऐप से भुगतान करें
+            </a>
+
+            <p className="fine-print">
+              भुगतान करने के बाद UPI ऐप में Transaction Details खोलें
+              और UTR / Transaction ID यहाँ भरें।
+            </p>
+
+            <input
+              placeholder="12 अंकों का UTR / Transaction ID"
+              value={utr}
+              onChange={e=>setUtr(e.target.value)}
+              maxLength={50}
+            />
+
+            <button
+              className="place-order"
+              onClick={submitUpiReference}
+              disabled={utrSubmitting}
+              style={{marginTop:'10px'}}
+            >
+              {utrSubmitting ? 'UTR जमा हो रहा है...' : 'UTR जमा करें'}
+            </button>
+
+            <p className="fine-print">
+              UTR जमा करना भुगतान का प्रमाण नहीं है।
+              दुकान भुगतान की जाँच करेगी।
+            </p>
+          </div>
+        }
 
         <button
           className="place-order"
@@ -629,8 +720,10 @@ function AdminPanel() {
   }
 
   async function markPaymentReceived(orderId) {
+    const order = orders.find(o=>o.id===orderId);
+
     const confirmed = window.confirm(
-      'क्या ग्राहक से भुगतान वास्तव में प्राप्त हो गया है?'
+      `क्या आपने इस ऑर्डर ${order?.order_number || ''} का भुगतान अपने बैंक/PhonePe में वास्तव में प्राप्त होते हुए जाँच लिया है?`
     );
 
     if (!confirmed) return;
@@ -763,7 +856,8 @@ function AdminPanel() {
     return (
       String(o.order_number || '').toLowerCase().includes(term) ||
       String(o.customer_name || '').toLowerCase().includes(term) ||
-      String(o.mobile || '').includes(term)
+      String(o.mobile || '').includes(term) ||
+      String(o.payment_reference || '').toLowerCase().includes(term)
     );
   });
 
@@ -839,7 +933,7 @@ function AdminPanel() {
       </div>
 
       <input
-        placeholder="Order ID, ग्राहक नाम या मोबाइल खोजें..."
+        placeholder="Order ID, ग्राहक नाम, मोबाइल या UTR खोजें..."
         value={searchOrder}
         onChange={e=>setSearchOrder(e.target.value)}
       />
@@ -927,6 +1021,31 @@ function AdminPanel() {
             <b>भुगतान स्थिति:</b>{' '}
             {o.payment_status==='paid'?'Paid':'Pending'}
           </p>
+
+          {o.payment_method==='UPI' &&
+            <div className="panel" style={{marginTop:'10px'}}>
+              <h4>UPI Payment Verification</h4>
+
+              <p>
+                <b>ग्राहक का UTR / Transaction ID:</b>
+                <br/>
+                {o.payment_reference || 'अभी UTR जमा नहीं हुआ है।'}
+              </p>
+
+              <p>
+                <b>UTR जमा करने का समय:</b>
+                <br/>
+                {o.payment_submitted_at
+                  ? new Date(o.payment_submitted_at).toLocaleString('en-IN')
+                  : 'उपलब्ध नहीं'}
+              </p>
+
+              <p className="fine-print">
+                UTR देखकर अकेले भुगतान Confirm न करें।
+                अपने PhonePe या बैंक खाते में वास्तविक राशि जाँचें।
+              </p>
+            </div>
+          }
 
           {o.payment_status!=='paid' &&
             <button
