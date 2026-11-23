@@ -448,7 +448,11 @@ function AdminPanel() {
   const [session,setSession] = useState(null);
   const [products,setProducts] = useState([]);
   const [categories,setCategories] = useState([]);
+  const [orders,setOrders] = useState([]);
   const [message,setMessage] = useState('');
+  const [activeTab,setActiveTab] = useState('orders');
+  const [loadingOrders,setLoadingOrders] = useState(false);
+  const [searchOrder,setSearchOrder] = useState('');
 
   const [product,setProduct] = useState({
     name:'',
@@ -458,15 +462,34 @@ function AdminPanel() {
     description:''
   });
 
+  const orderStatuses = [
+    {value:'placed',label:'नया ऑर्डर'},
+    {value:'confirmed',label:'Confirmed'},
+    {value:'packed',label:'Packed'},
+    {value:'out_for_delivery',label:'Out for Delivery'},
+    {value:'delivered',label:'Delivered'},
+    {value:'cancelled',label:'Cancelled'}
+  ];
+
+  function statusLabel(status) {
+    return orderStatuses.find(s=>s.value===status)?.label || status;
+  }
+
   useEffect(()=>{
     if (!supabase) return;
 
-    supabase.auth.getSession().then(({data})=>{
+    supabase.auth.getSession().then(({data,error})=>{
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
       setSession(data.session);
 
       if (data.session) {
         loadProducts();
         loadCategories();
+        loadOrders();
       }
     });
   },[]);
@@ -485,7 +508,7 @@ function AdminPanel() {
     setCategories(data || []);
 
     if (data?.length) {
-      setProduct(current => ({
+      setProduct(current=>({
         ...current,
         category_id:current.category_id || String(data[0].id)
       }));
@@ -516,6 +539,70 @@ function AdminPanel() {
     setProducts(data || []);
   }
 
+  async function loadOrders() {
+    setLoadingOrders(true);
+
+    const {data,error} = await supabase
+      .from('orders')
+      .select(`
+        *,
+        order_items (
+          id,
+          product_name,
+          quantity,
+          unit_price,
+          line_total
+        )
+      `)
+      .order('created_at',{ascending:false});
+
+    setLoadingOrders(false);
+
+    if (error) {
+      console.error('Orders loading error:',error);
+      setMessage('Orders Error: '+error.message);
+      return;
+    }
+
+    setOrders(data || []);
+  }
+
+  async function updateOrderStatus(orderId,newStatus) {
+    const {error} = await supabase
+      .from('orders')
+      .update({order_status:newStatus})
+      .eq('id',orderId);
+
+    if (error) {
+      setMessage('Status Update Error: '+error.message);
+      return;
+    }
+
+    setMessage('ऑर्डर स्टेटस अपडेट हो गया।');
+    await loadOrders();
+  }
+
+  async function markPaymentReceived(orderId) {
+    const confirmed = window.confirm(
+      'क्या ग्राहक से भुगतान वास्तव में प्राप्त हो गया है?'
+    );
+
+    if (!confirmed) return;
+
+    const {error} = await supabase
+      .from('orders')
+      .update({payment_status:'paid'})
+      .eq('id',orderId);
+
+    if (error) {
+      setMessage('Payment Update Error: '+error.message);
+      return;
+    }
+
+    setMessage('भुगतान Paid के रूप में अपडेट किया गया।');
+    await loadOrders();
+  }
+
   async function login(e) {
     e.preventDefault();
 
@@ -535,6 +622,7 @@ function AdminPanel() {
       setMessage('Admin Login सफल हुआ।');
       loadProducts();
       loadCategories();
+      loadOrders();
     }
   }
 
@@ -621,6 +709,18 @@ function AdminPanel() {
     loadProducts();
   }
 
+  const filteredOrders = orders.filter(o=>{
+    const term = searchOrder.trim().toLowerCase();
+
+    if (!term) return true;
+
+    return (
+      String(o.order_number || '').toLowerCase().includes(term) ||
+      String(o.customer_name || '').toLowerCase().includes(term) ||
+      String(o.mobile || '').includes(term)
+    );
+  });
+
   if (!session) {
     return <main className="admin">
       <h1>Chetan Kirana Admin</h1>
@@ -646,15 +746,16 @@ function AdminPanel() {
         <button className="place-order">Login</button>
       </form>
 
-      {message && <p>{message}</p>}
+      {message && <p className="notice">{message}</p>}
 
       <a href="/">← दुकान पर वापस जाएँ</a>
     </main>;
   }
 
   return <main className="admin">
+
     <div className="section-heading">
-      <h1>Admin Panel</h1>
+      <h1>Chetan Kirana Admin</h1>
 
       <button onClick={async()=>{
         await supabase.auth.signOut();
@@ -664,89 +765,244 @@ function AdminPanel() {
       </button>
     </div>
 
-    <h2>नया उत्पाद जोड़ें</h2>
-
-    <form onSubmit={saveProduct}>
-      <input
-        required
-        placeholder="उत्पाद का नाम"
-        value={product.name}
-        onChange={e=>setProduct({...product,name:e.target.value})}
-      />
-
-      <select
-        required
-        value={product.category_id}
-        onChange={e=>setProduct({...product,category_id:e.target.value})}
-      >
-        <option value="">Category चुनें</option>
-        {categories.map(c=>
-          <option key={c.id} value={c.id}>{c.name}</option>
-        )}
-      </select>
-
-      <input
-        required
-        type="number"
-        min="0"
-        step="0.01"
-        placeholder="कीमत ₹"
-        value={product.price}
-        onChange={e=>setProduct({...product,price:e.target.value})}
-      />
-
-      <input
-        type="number"
-        min="0"
-        step="1"
-        placeholder="Stock"
-        value={product.stock}
-        onChange={e=>setProduct({...product,stock:e.target.value})}
-      />
-
-      <textarea
-        placeholder="छोटा विवरण"
-        value={product.description}
-        onChange={e=>setProduct({...product,description:e.target.value})}
-      />
-
+    <div className="chips">
       <button
-        className="place-order"
-        disabled={!categories.length}
+        className={activeTab==='orders'?'selected':''}
+        onClick={()=>setActiveTab('orders')}
       >
-        उत्पाद सेव करें
+        ऑर्डर ({orders.length})
       </button>
 
-      {!categories.length &&
-        <p>पहले Categories Table में Category जोड़ें।</p>
-      }
-    </form>
+      <button
+        className={activeTab==='products'?'selected':''}
+        onClick={()=>setActiveTab('products')}
+      >
+        Products ({products.length})
+      </button>
+    </div>
 
     {message && <p className="notice">{message}</p>}
 
-    <h2>उत्पाद सूची ({products.length})</h2>
+    {activeTab==='orders' && <>
+      <div className="section-heading">
+        <h2>सभी ऑर्डर</h2>
 
-    {products.map(p=>
-      <div className="admin-product" key={p.id}>
-        <b>{p.name}</b>
-        <span>₹{p.price}</span>
-        <span>Stock: {p.stock}</span>
-        <span>{p.category?.name || 'अन्य'}</span>
-
-        <label>
-          फोटो अपलोड
-          <input
-            type="file"
-            accept="image/*"
-            onChange={e=>uploadImage(e,p)}
-          />
-        </label>
-
-        <button onClick={()=>toggleProduct(p)}>
-          {p.is_active ? 'दुकान से हटाएँ' : 'फिर चालू करें'}
+        <button onClick={loadOrders} disabled={loadingOrders}>
+          {loadingOrders?'लोड हो रहा है...':'Refresh'}
         </button>
       </div>
-    )}
+
+      <input
+        placeholder="Order ID, ग्राहक नाम या मोबाइल खोजें..."
+        value={searchOrder}
+        onChange={e=>setSearchOrder(e.target.value)}
+      />
+
+      <div className="bill-row">
+        <b>कुल ऑर्डर</b>
+        <b>{orders.length}</b>
+      </div>
+
+      {loadingOrders && <p>ऑर्डर लोड हो रहे हैं...</p>}
+
+      {!loadingOrders && filteredOrders.length===0 &&
+        <p>कोई ऑर्डर नहीं मिला।</p>
+      }
+
+      {filteredOrders.map(o=>
+        <div
+          className="panel"
+          key={o.id}
+          style={{marginBottom:'18px'}}
+        >
+          <div className="section-heading">
+            <h3>{o.order_number}</h3>
+            <b>₹{o.total}</b>
+          </div>
+
+          <p>
+            <b>ग्राहक:</b> {o.customer_name}
+          </p>
+
+          <p>
+            <b>मोबाइल:</b>{' '}
+            <a href={`tel:${o.mobile}`}>{o.mobile}</a>
+          </p>
+
+          <p>
+            <b>डिलीवरी पता:</b> {o.delivery_address}
+          </p>
+
+          {o.note && <p><b>निर्देश:</b> {o.note}</p>}
+
+          <p>
+            <b>ऑर्डर समय:</b>{' '}
+            {o.created_at
+              ? new Date(o.created_at).toLocaleString('en-IN')
+              : 'उपलब्ध नहीं'}
+          </p>
+
+          <hr/>
+
+          <h4>ऑर्डर के सामान</h4>
+
+          {(o.order_items || []).map(item=>
+            <div className="bill-row" key={item.id}>
+              <span>
+                {item.product_name} × {item.quantity}
+              </span>
+              <b>₹{item.line_total}</b>
+            </div>
+          )}
+
+          <hr/>
+
+          <div className="bill-row">
+            <span>सामान का कुल</span>
+            <b>₹{o.subtotal}</b>
+          </div>
+
+          <div className="bill-row">
+            <span>डिलीवरी चार्ज</span>
+            <b>₹{o.delivery_fee}</b>
+          </div>
+
+          <div className="bill-row grand-total">
+            <span>कुल राशि</span>
+            <b>₹{o.total}</b>
+          </div>
+
+          <p>
+            <b>भुगतान तरीका:</b>{' '}
+            {o.payment_method==='COD'?'Cash on Delivery':'UPI'}
+          </p>
+
+          <p>
+            <b>भुगतान स्थिति:</b>{' '}
+            {o.payment_status==='paid'?'Paid':'Pending'}
+          </p>
+
+          {o.payment_status!=='paid' &&
+            <button
+              onClick={()=>markPaymentReceived(o.id)}
+            >
+              भुगतान प्राप्त हुआ
+            </button>
+          }
+
+          <hr/>
+
+          <label>
+            <b>ऑर्डर स्टेटस बदलें</b>
+          </label>
+
+          <select
+            value={o.order_status}
+            onChange={e=>updateOrderStatus(o.id,e.target.value)}
+            style={{
+              display:'block',
+              width:'100%',
+              padding:'12px',
+              marginTop:'8px'
+            }}
+          >
+            {orderStatuses.map(s=>
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            )}
+          </select>
+
+          <p>
+            <b>वर्तमान स्थिति:</b> {statusLabel(o.order_status)}
+          </p>
+        </div>
+      )}
+    </>}
+
+    {activeTab==='products' && <>
+      <h2>नया उत्पाद जोड़ें</h2>
+
+      <form onSubmit={saveProduct}>
+        <input
+          required
+          placeholder="उत्पाद का नाम"
+          value={product.name}
+          onChange={e=>setProduct({...product,name:e.target.value})}
+        />
+
+        <select
+          required
+          value={product.category_id}
+          onChange={e=>setProduct({...product,category_id:e.target.value})}
+        >
+          <option value="">Category चुनें</option>
+          {categories.map(c=>
+            <option key={c.id} value={c.id}>{c.name}</option>
+          )}
+        </select>
+
+        <input
+          required
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="कीमत ₹"
+          value={product.price}
+          onChange={e=>setProduct({...product,price:e.target.value})}
+        />
+
+        <input
+          type="number"
+          min="0"
+          step="1"
+          placeholder="Stock"
+          value={product.stock}
+          onChange={e=>setProduct({...product,stock:e.target.value})}
+        />
+
+        <textarea
+          placeholder="छोटा विवरण"
+          value={product.description}
+          onChange={e=>setProduct({...product,description:e.target.value})}
+        />
+
+        <button
+          className="place-order"
+          disabled={!categories.length}
+        >
+          उत्पाद सेव करें
+        </button>
+
+        {!categories.length &&
+          <p>पहले Categories Table में Category जोड़ें।</p>
+        }
+      </form>
+
+      <h2>उत्पाद सूची ({products.length})</h2>
+
+      {products.map(p=>
+        <div className="admin-product" key={p.id}>
+          <b>{p.name}</b>
+          <span>₹{p.price}</span>
+          <span>Stock: {p.stock}</span>
+          <span>{p.category?.name || 'अन्य'}</span>
+
+          <label>
+            फोटो अपलोड
+            <input
+              type="file"
+              accept="image/*"
+              onChange={e=>uploadImage(e,p)}
+            />
+          </label>
+
+          <button onClick={()=>toggleProduct(p)}>
+            {p.is_active?'दुकान से हटाएँ':'फिर चालू करें'}
+          </button>
+        </div>
+      )}
+    </>}
 
     <a href="/">← दुकान पर वापस जाएँ</a>
   </main>;
