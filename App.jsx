@@ -22,47 +22,81 @@ function Storefront() {
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('सभी');
-  const [form, setForm] = useState({name:'',mobile:'',address:'',note:'',payment:'COD'});
+  const [form, setForm] = useState({
+    name:'',
+    mobile:'',
+    address:'',
+    note:'',
+    payment:'COD'
+  });
   const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!supabase) return;
-
-    supabase.from('products')
-      .select('id,name,category,price,unit,description,image_url')
-      .eq('is_active', true)
-      .order('name')
-      .then(({data,error}) => {
-        if (error) {
-          console.error(error);
-          return;
-        }
-
-        const realProducts = data || [];
-        const realNames = new Set(
-          realProducts.map(p => p.name.trim().toLowerCase())
-        );
-
-        const remainingSamples = sampleProducts.filter(
-          p => !realNames.has(p.name.trim().toLowerCase())
-        );
-
-        setProducts([...realProducts, ...remainingSamples]);
-      });
+    loadProducts();
   }, []);
 
-  const categories = ['सभी', ...new Set(products.map(p => p.category).filter(Boolean))];
+  async function loadProducts() {
+    if (!supabase) return;
+
+    const {data,error} = await supabase
+      .from('products')
+      .select(`
+        id,
+        name,
+        category_id,
+        price,
+        description,
+        image_url,
+        stock,
+        is_active,
+        category:categories(name)
+      `)
+      .eq('is_active',true)
+      .order('name');
+
+    if (error) {
+      console.error('Product loading error:',error);
+      setMessage('उत्पाद लोड नहीं हो पाए। कृपया पेज Refresh करें।');
+      return;
+    }
+
+    const realProducts = (data || []).map(p => ({
+      ...p,
+      category: p.category?.name || 'अन्य',
+      unit: 'पीस'
+    }));
+
+    const realNames = new Set(
+      realProducts.map(p => p.name.trim().toLowerCase())
+    );
+
+    const remainingSamples = sampleProducts.filter(
+      p => !realNames.has(p.name.trim().toLowerCase())
+    );
+
+    setProducts([...realProducts,...remainingSamples]);
+  }
+
+  const categories = [
+    'सभी',
+    ...new Set(products.map(p => p.category).filter(Boolean))
+  ];
 
   const visibleProducts = products.filter(p =>
     (category === 'सभी' || p.category === category) &&
     p.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const subtotal = cart.reduce((sum,p) => sum + Number(p.price) * p.qty, 0);
+  const subtotal = cart.reduce(
+    (sum,p) => sum + Number(p.price)*p.qty,
+    0
+  );
+
   const delivery = subtotal === 0 || subtotal >= 500 ? 0 : 20;
   const total = subtotal + delivery;
 
-  function changeQuantity(product, quantity) {
+  function changeQuantity(product,quantity) {
     setCart(current => {
       const existing = current.find(p => p.id === product.id);
 
@@ -82,31 +116,14 @@ function Storefront() {
 
   function buyNow(product) {
     const existing = cart.find(p => p.id === product.id);
-    const quantity = existing ? existing.qty : 1;
-
-    changeQuantity(product, quantity);
+    changeQuantity(product,existing ? existing.qty : 1);
 
     setTimeout(() => {
       document.getElementById('checkout-panel')?.scrollIntoView({
         behavior:'smooth',
         block:'start'
       });
-    }, 100);
-  }
-
-  function makeOrderMessage() {
-    return [
-      'नमस्ते Chetan Kirana, मुझे यह ऑर्डर करना है:',
-      ...cart.map(p => `${p.name} x ${p.qty} = ₹${Number(p.price)*p.qty}`),
-      `सामान: ₹${subtotal}`,
-      `डिलीवरी: ₹${delivery}`,
-      `कुल: ₹${total}`,
-      `नाम: ${form.name}`,
-      `मोबाइल: ${form.mobile}`,
-      `पता: ${form.address}`,
-      `नोट: ${form.note}`,
-      `पेमेंट: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI'}`
-    ].join('\n');
+    },100);
   }
 
   async function checkout() {
@@ -120,38 +137,65 @@ function Storefront() {
       return setMessage('कृपया नाम, मोबाइल नंबर और पूरा पता भरें।');
     }
 
-    if (!/^[6-9][0-9]{9}$/.test(form.mobile)) {
+    if (!/^[6-9][0-9]{9}$/.test(form.mobile.trim())) {
       return setMessage('कृपया सही 10 अंकों का मोबाइल नंबर लिखें।');
     }
 
-    const containsSample = cart.some(p => String(p.id).startsWith('sample-'));
-
-    if (supabase && !containsSample) {
-      const {error} = await supabase.rpc('create_customer_order', {
-        p_customer_name: form.name.trim(),
-        p_mobile: form.mobile,
-        p_address: form.address.trim(),
-        p_note: form.note,
-        p_payment_method: form.payment,
-        p_items: cart.map(p => ({
-          product_id:p.id,
-          quantity:p.qty
-        }))
-      });
-
-      if (error) {
-        setMessage('वेबसाइट पर ऑर्डर सेव नहीं हो पाया। WhatsApp से ऑर्डर भेजें।');
-      } else {
-        setMessage('ऑर्डर वेबसाइट पर सेव हुआ है। WhatsApp में भी विवरण भेजें।');
-      }
-    } else {
-      setMessage('WhatsApp में ऑर्डर भेजकर दुकान से पुष्टि प्राप्त करें।');
+    if (!supabase) {
+      return setMessage('Database कनेक्शन उपलब्ध नहीं है।');
     }
 
-    window.open(
-      `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(makeOrderMessage())}`,
-      '_blank'
+    const containsSample = cart.some(p =>
+      String(p.id).startsWith('sample-')
     );
+
+    if (containsSample) {
+      return setMessage(
+        'आपके कार्ट में Demo Product है। कृपया केवल दुकान के असली Products चुनें।'
+      );
+    }
+
+    setSubmitting(true);
+
+    try {
+      const {data,error} = await supabase.rpc(
+        'create_customer_order',
+        {
+          p_customer_name:form.name.trim(),
+          p_mobile:form.mobile.trim(),
+          p_address:form.address.trim(),
+          p_note:form.note.trim(),
+          p_payment_method:form.payment,
+          p_items:cart.map(p => ({
+            product_id:Number(p.id),
+            quantity:p.qty
+          }))
+        }
+      );
+
+      if (error) {
+        console.error('Order creation error:',error);
+        setMessage('ऑर्डर सेव नहीं हुआ। कृपया दोबारा कोशिश करें।');
+        return;
+      }
+
+      if (!data || !data.success || !data.order_number) {
+        setMessage('ऑर्डर की पुष्टि नहीं हो सकी। दुकान से संपर्क करें।');
+        return;
+      }
+
+      setCart([]);
+
+      setMessage(
+        `🎉 आपका ऑर्डर सफलतापूर्वक सेव हो गया! Order ID: ${data.order_number} | कुल राशि: ₹${data.total} | भुगतान: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI'}`
+      );
+
+    } catch (error) {
+      console.error(error);
+      setMessage('कुछ तकनीकी समस्या आई। कृपया दोबारा कोशिश करें।');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return <>
@@ -166,7 +210,13 @@ function Storefront() {
           <small>आपकी अपनी ऑनलाइन किराना दुकान</small>
         </div>
       </div>
-      <a className="whatsapp" href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noreferrer">
+
+      <a
+        className="whatsapp"
+        href={`https://wa.me/${WHATSAPP}`}
+        target="_blank"
+        rel="noreferrer"
+      >
         WhatsApp
       </a>
     </header>
@@ -222,31 +272,49 @@ function Storefront() {
 
               <div className="product-info">
                 <b>{p.name}</b>
-                <small>{p.description||p.unit||''}</small>
+                <small>{p.description || p.unit || ''}</small>
+
                 <strong>
-                  ₹{p.price} <small>/{p.unit||'पीस'}</small>
+                  ₹{p.price} <small>/{p.unit || 'पीस'}</small>
                 </strong>
 
                 {cart.some(x=>x.id===p.id) &&
                   <div className="quantity">
                     <button onClick={()=>
-                      changeQuantity(p,(cart.find(x=>x.id===p.id)?.qty||0)-1)
+                      changeQuantity(
+                        p,
+                        (cart.find(x=>x.id===p.id)?.qty || 0)-1
+                      )
                     }>−</button>
+
                     <b>{cart.find(x=>x.id===p.id)?.qty}</b>
+
                     <button onClick={()=>
-                      changeQuantity(p,(cart.find(x=>x.id===p.id)?.qty||0)+1)
+                      changeQuantity(
+                        p,
+                        (cart.find(x=>x.id===p.id)?.qty || 0)+1
+                      )
                     }>+</button>
                   </div>
                 }
 
                 <div className="product-actions">
-                  <button className="add" onClick={()=>changeQuantity(
-                    p,(cart.find(x=>x.id===p.id)?.qty||0)+1
-                  )}>
+                  <button
+                    className="add"
+                    onClick={()=>
+                      changeQuantity(
+                        p,
+                        (cart.find(x=>x.id===p.id)?.qty || 0)+1
+                      )
+                    }
+                  >
                     + कार्ट में जोड़ें
                   </button>
 
-                  <button className="buy-now" onClick={()=>buyNow(p)}>
+                  <button
+                    className="buy-now"
+                    onClick={()=>buyNow(p)}
+                  >
                     अभी खरीदें
                   </button>
                 </div>
@@ -296,16 +364,19 @@ function Storefront() {
             value={form.name}
             onChange={e=>setForm({...form,name:e.target.value})}
           />
+
           <input
             placeholder="10 अंकों का मोबाइल नंबर"
             value={form.mobile}
             onChange={e=>setForm({...form,mobile:e.target.value})}
           />
+
           <textarea
             placeholder="पूरा डिलीवरी पता (चिखली के आसपास)"
             value={form.address}
             onChange={e=>setForm({...form,address:e.target.value})}
           />
+
           <input
             placeholder="अतिरिक्त निर्देश (वैकल्पिक)"
             value={form.note}
@@ -335,126 +406,222 @@ function Storefront() {
 
         {form.payment==='UPI' &&
           <p className="upi-note">
-            UPI ID: <b>{UPI_ID}</b> — भुगतान के बाद WhatsApp पर पुष्टि भेजें।
+            UPI ID: <b>{UPI_ID}</b>
+            <br/>
+            UPI भुगतान दुकान द्वारा अलग से Verify किया जाएगा।
+            ऑर्डर देने से भुगतान अपने आप Confirm नहीं होगा।
           </p>
         }
 
         {message && <p className="notice">{message}</p>}
 
-        <button className="place-order" onClick={checkout}>
-          WhatsApp पर ऑर्डर भेजें
+        <button
+          className="place-order"
+          onClick={checkout}
+          disabled={submitting}
+        >
+          {submitting ? 'ऑर्डर सेव हो रहा है...' : 'वेबसाइट पर ऑर्डर करें'}
         </button>
 
         <small className="fine-print">
-          ऑर्डर भेजने के बाद दुकान उपलब्धता और डिलीवरी की पुष्टि करेगी।
+          ऑर्डर मिलने के बाद दुकान उपलब्धता और डिलीवरी की पुष्टि करेगी।
         </small>
       </section>
     </main>
 
     <footer>
       © Chetan Kirana • Chikhali, Maharashtra •
-      <a href="https://maps.app.goo.gl/KkEmZYgXV6szxAiv8"> दुकान का पता</a>
+      <a
+        href="https://maps.app.goo.gl/KkEmZYgXV6szxAiv8"
+        target="_blank"
+        rel="noreferrer"
+      >
+        दुकान का पता
+      </a>
     </footer>
   </>;
 }
 
 function AdminPanel() {
-  const [email,setEmail]=useState('');
-  const [password,setPassword]=useState('');
-  const [session,setSession]=useState(null);
-  const [products,setProducts]=useState([]);
-  const [message,setMessage]=useState('');
-  const [product,setProduct]=useState({
+  const [email,setEmail] = useState('');
+  const [password,setPassword] = useState('');
+  const [session,setSession] = useState(null);
+  const [products,setProducts] = useState([]);
+  const [categories,setCategories] = useState([]);
+  const [message,setMessage] = useState('');
+
+  const [product,setProduct] = useState({
     name:'',
-    category:'किराना',
+    category_id:'',
     price:'',
-    unit:'किलो',
+    stock:'0',
     description:''
   });
 
   useEffect(()=>{
-    if(!supabase)return;
+    if (!supabase) return;
+
     supabase.auth.getSession().then(({data})=>{
       setSession(data.session);
-      if(data.session)loadProducts();
+
+      if (data.session) {
+        loadProducts();
+        loadCategories();
+      }
     });
   },[]);
 
-  async function loadProducts() {
-    const {data,error}=await supabase
-      .from('products')
-      .select('*')
-      .order('created_at',{ascending:false});
+  async function loadCategories() {
+    const {data,error} = await supabase
+      .from('categories')
+      .select('id,name')
+      .order('name');
 
-    if(error)setMessage(error.message);
-    setProducts(data||[]);
+    if (error) {
+      setMessage('Category Error: '+error.message);
+      return;
+    }
+
+    setCategories(data || []);
+
+    if (data?.length) {
+      setProduct(current => ({
+        ...current,
+        category_id:current.category_id || String(data[0].id)
+      }));
+    }
+  }
+
+  async function loadProducts() {
+    const {data,error} = await supabase
+      .from('products')
+      .select(`
+        id,
+        name,
+        price,
+        stock,
+        description,
+        image_url,
+        is_active,
+        category_id,
+        category:categories(name)
+      `)
+      .order('id',{ascending:false});
+
+    if (error) {
+      setMessage('Products Error: '+error.message);
+      return;
+    }
+
+    setProducts(data || []);
   }
 
   async function login(e) {
     e.preventDefault();
 
-    if(!supabase) {
-      return setMessage('Supabase URL और public anon key अभी सेट नहीं हैं।');
+    if (!supabase) {
+      return setMessage('Supabase URL और public anon key सेट नहीं हैं।');
     }
 
-    const {data,error}=await supabase.auth.signInWithPassword({email,password});
+    const {data,error} = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
 
-    if(error)setMessage(error.message);
-    else {
+    if (error) {
+      setMessage(error.message);
+    } else {
       setSession(data.session);
+      setMessage('Admin Login सफल हुआ।');
       loadProducts();
+      loadCategories();
     }
   }
 
   async function saveProduct(e) {
     e.preventDefault();
 
-    const {error}=await supabase.from('products').insert({
-      ...product,
-      price:Number(product.price),
-      is_active:true
+    if (!product.category_id) {
+      return setMessage('पहले Category चुनें।');
+    }
+
+    const {error} = await supabase
+      .from('products')
+      .insert({
+        name:product.name.trim(),
+        category_id:Number(product.category_id),
+        price:Number(product.price),
+        stock:Number(product.stock),
+        description:product.description,
+        is_active:true
+      });
+
+    if (error) {
+      setMessage('Product Save Error: '+error.message);
+      return;
+    }
+
+    setMessage('उत्पाद सफलतापूर्वक सेव हो गया।');
+
+    setProduct({
+      name:'',
+      category_id:categories.length ? String(categories[0].id) : '',
+      price:'',
+      stock:'0',
+      description:''
     });
 
-    setMessage(error?error.message:'उत्पाद सेव हो गया।');
-
-    if(!error) {
-      setProduct({
-        name:'',
-        category:'किराना',
-        price:'',
-        unit:'किलो',
-        description:''
-      });
-      loadProducts();
-    }
+    loadProducts();
   }
 
   async function uploadImage(e,p) {
-    const file=e.target.files?.[0];
-    if(!file)return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const path=`${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g,'-')}`;
+    const path =
+      `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g,'-')}`;
 
-    const {error}=await supabase.storage
+    const {error} = await supabase.storage
       .from('product-images')
       .upload(path,file);
 
-    if(error)return setMessage(error.message);
+    if (error) {
+      return setMessage('Image Upload Error: '+error.message);
+    }
 
-    const {data}=supabase.storage
+    const {data} = supabase.storage
       .from('product-images')
       .getPublicUrl(path);
 
-    const result=await supabase
+    const result = await supabase
       .from('products')
       .update({image_url:data.publicUrl})
       .eq('id',p.id);
 
-    if(result.error)setMessage(result.error.message);
-    else loadProducts();
+    if (result.error) {
+      setMessage(result.error.message);
+    } else {
+      setMessage('Product Image Upload हो गई।');
+      loadProducts();
+    }
   }
 
-  if(!session) {
+  async function toggleProduct(p) {
+    const {error} = await supabase
+      .from('products')
+      .update({is_active:!p.is_active})
+      .eq('id',p.id);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setMessage('Product Status अपडेट हो गया।');
+    loadProducts();
+  }
+
+  if (!session) {
     return <main className="admin">
       <h1>Chetan Kirana Admin</h1>
       <p>केवल अधिकृत एडमिन लॉगिन करें।</p>
@@ -467,6 +634,7 @@ function AdminPanel() {
           value={email}
           onChange={e=>setEmail(e.target.value)}
         />
+
         <input
           type="password"
           required
@@ -474,10 +642,12 @@ function AdminPanel() {
           value={password}
           onChange={e=>setPassword(e.target.value)}
         />
+
         <button className="place-order">Login</button>
       </form>
 
-      <p>{message}</p>
+      {message && <p>{message}</p>}
+
       <a href="/">← दुकान पर वापस जाएँ</a>
     </main>;
   }
@@ -485,6 +655,7 @@ function AdminPanel() {
   return <main className="admin">
     <div className="section-heading">
       <h1>Admin Panel</h1>
+
       <button onClick={async()=>{
         await supabase.auth.signOut();
         setSession(null);
@@ -502,12 +673,18 @@ function AdminPanel() {
         value={product.name}
         onChange={e=>setProduct({...product,name:e.target.value})}
       />
-      <input
+
+      <select
         required
-        placeholder="श्रेणी"
-        value={product.category}
-        onChange={e=>setProduct({...product,category:e.target.value})}
-      />
+        value={product.category_id}
+        onChange={e=>setProduct({...product,category_id:e.target.value})}
+      >
+        <option value="">Category चुनें</option>
+        {categories.map(c=>
+          <option key={c.id} value={c.id}>{c.name}</option>
+        )}
+      </select>
+
       <input
         required
         type="number"
@@ -517,27 +694,44 @@ function AdminPanel() {
         value={product.price}
         onChange={e=>setProduct({...product,price:e.target.value})}
       />
+
       <input
-        placeholder="इकाई (किलो/पैक/पीस)"
-        value={product.unit}
-        onChange={e=>setProduct({...product,unit:e.target.value})}
+        type="number"
+        min="0"
+        step="1"
+        placeholder="Stock"
+        value={product.stock}
+        onChange={e=>setProduct({...product,stock:e.target.value})}
       />
-      <input
+
+      <textarea
         placeholder="छोटा विवरण"
         value={product.description}
         onChange={e=>setProduct({...product,description:e.target.value})}
       />
-      <button className="place-order">उत्पाद सेव करें</button>
+
+      <button
+        className="place-order"
+        disabled={!categories.length}
+      >
+        उत्पाद सेव करें
+      </button>
+
+      {!categories.length &&
+        <p>पहले Categories Table में Category जोड़ें।</p>
+      }
     </form>
 
     {message && <p className="notice">{message}</p>}
 
-    <h2>उत्पाद सूची</h2>
+    <h2>उत्पाद सूची ({products.length})</h2>
 
     {products.map(p=>
       <div className="admin-product" key={p.id}>
         <b>{p.name}</b>
         <span>₹{p.price}</span>
+        <span>Stock: {p.stock}</span>
+        <span>{p.category?.name || 'अन्य'}</span>
 
         <label>
           फोटो अपलोड
@@ -548,16 +742,8 @@ function AdminPanel() {
           />
         </label>
 
-        <button onClick={async()=>{
-          const {error}=await supabase
-            .from('products')
-            .update({is_active:!p.is_active})
-            .eq('id',p.id);
-
-          if(error)setMessage(error.message);
-          loadProducts();
-        }}>
-          {p.is_active?'दुकान से हटाएँ':'फिर चालू करें'}
+        <button onClick={()=>toggleProduct(p)}>
+          {p.is_active ? 'दुकान से हटाएँ' : 'फिर चालू करें'}
         </button>
       </div>
     )}
