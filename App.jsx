@@ -32,6 +32,10 @@ function Storefront() {
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+const [lastUpiOrder, setLastUpiOrder] = useState(null);
+const [utr, setUtr] = useState('');
+const [utrSubmitting, setUtrSubmitting] = useState(false);
+
   useEffect(() => {
     loadProducts();
   }, []);
@@ -186,6 +190,14 @@ function Storefront() {
 
       setCart([]);
 
+if (form.payment === 'UPI') {
+  setLastUpiOrder({
+    orderNumber: data.order_number,
+    mobile: form.mobile.trim()
+  });
+  setUtr('');
+}
+
       setMessage(
         `🎉 आपका ऑर्डर सफलतापूर्वक सेव हो गया! Order ID: ${data.order_number} | कुल राशि: ₹${data.total} | भुगतान: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI'}`
       );
@@ -197,6 +209,40 @@ function Storefront() {
       setSubmitting(false);
     }
   }
+
+async function submitUpiReference() {
+  if (!utr.trim()) {
+    return setMessage('कृपया UTR / Transaction ID भरें।');
+  }
+
+  setUtrSubmitting(true);
+  setMessage('');
+
+  const { data, error } = await supabase.rpc(
+    'submit_upi_reference',
+    {
+      p_order_number: lastUpiOrder.orderNumber,
+      p_mobile: lastUpiOrder.mobile,
+      p_reference: utr.trim()
+    }
+  );
+
+  setUtrSubmitting(false);
+
+  if (error) {
+    setMessage('UTR Submit Error: ' + error.message);
+    return;
+  }
+
+  if (!data?.success) {
+    setMessage(data?.message || 'UTR जमा नहीं हुआ।');
+    return;
+  }
+
+  setMessage('आपका UTR सफलतापूर्वक जमा हो गया। भुगतान दुकान द्वारा Verify किया जाएगा।');
+  setLastUpiOrder(null);
+  setUtr('');
+}
 
   return <>
     <header>
