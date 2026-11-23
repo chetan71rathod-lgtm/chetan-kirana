@@ -13,6 +13,14 @@ const sampleProducts = [
   {id:'sample-4',name:'चावल',category:'चावल',price:60,unit:'किलो',description:'रोज़ाना उपयोग के लिए'}
 ];
 
+const trackingSteps = [
+  {value:'placed',label:'ऑर्डर प्राप्त हुआ',icon:'🛒'},
+  {value:'confirmed',label:'ऑर्डर Confirmed',icon:'✅'},
+  {value:'packed',label:'सामान पैक हो गया',icon:'📦'},
+  {value:'out_for_delivery',label:'डिलीवरी के लिए निकल गया',icon:'🚚'},
+  {value:'delivered',label:'ऑर्डर Delivered',icon:'🎉'}
+];
+
 export default function App() {
   if (window.location.pathname === '/admin') return <AdminPanel />;
   return <Storefront />;
@@ -213,7 +221,6 @@ function Storefront() {
         setLastUpiOrder(null);
       }
 
-      // ग्राहक को Tracking के लिए Order ID और Mobile भी दिखाएँ
       setTrackingOrderId(data.order_number);
       setTrackingMobile(form.mobile.trim());
 
@@ -377,12 +384,9 @@ function Storefront() {
         return;
       }
 
-      setTrackingMessage(
-        'UTR जमा हो गया। दुकान भुगतान की जाँच करेगी।'
-      );
-
       setTrackingUtr('');
       await trackCustomerOrder();
+      setTrackingMessage('UTR जमा हो गया। दुकान भुगतान की जाँच करेगी।');
 
     } catch (error) {
       console.error(error);
@@ -606,8 +610,102 @@ function Storefront() {
                 : 'उपलब्ध नहीं'}
             </p>
 
+            {/* ORDER PROGRESS TIMELINE */}
+            <div style={{
+              margin:'20px 0',
+              padding:'16px',
+              border:'1px solid #ddd',
+              borderRadius:'12px',
+              background:'#fff'
+            }}>
+              <h4 style={{marginTop:0}}>📍 Order Progress</h4>
+
+              {trackingOrder.order_status === 'cancelled' ? (
+                <div style={{
+                  padding:'14px',
+                  borderRadius:'8px',
+                  background:'#fee2e2',
+                  color:'#b91c1c',
+                  fontWeight:'bold'
+                }}>
+                  ❌ आपका ऑर्डर Cancelled है।
+                </div>
+              ) : (
+                trackingSteps.map((step,index) => {
+                  const currentIndex = trackingSteps.findIndex(
+                    item => item.value === trackingOrder.order_status
+                  );
+
+                  const completed =
+                    currentIndex >= 0 && index <= currentIndex;
+
+                  const current = index === currentIndex;
+
+                  return (
+                    <div
+                      key={step.value}
+                      style={{
+                        display:'flex',
+                        alignItems:'center',
+                        gap:'12px',
+                        padding:'12px 0',
+                        borderBottom:index !== trackingSteps.length-1
+                          ? '1px solid #eee'
+                          : 'none'
+                      }}
+                    >
+                      <div style={{
+                        width:'40px',
+                        height:'40px',
+                        minWidth:'40px',
+                        borderRadius:'50%',
+                        display:'flex',
+                        alignItems:'center',
+                        justifyContent:'center',
+                        background:completed ? '#dcfce7' : '#f1f5f9',
+                        border:current ? '2px solid #16a34a' : '1px solid #ddd',
+                        fontSize:'19px'
+                      }}>
+                        {completed ? step.icon : '○'}
+                      </div>
+
+                      <div style={{flex:1}}>
+                        <div style={{
+                          fontWeight:completed ? 'bold' : 'normal',
+                          color:completed ? '#15803d' : '#64748b'
+                        }}>
+                          {step.label}
+                        </div>
+
+                        {current && (
+                          <div style={{
+                            fontSize:'12px',
+                            color:'#15803d',
+                            fontWeight:'bold',
+                            marginTop:'3px'
+                          }}>
+                            वर्तमान स्थिति
+                          </div>
+                        )}
+                      </div>
+
+                      {completed && (
+                        <span style={{
+                          color:'#15803d',
+                          fontSize:'20px',
+                          fontWeight:'bold'
+                        }}>
+                          ✓
+                        </span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
             <p>
-              <b>ऑर्डर स्थिति:</b>{' '}
+              <b>वर्तमान ऑर्डर स्थिति:</b>{' '}
               {trackingStatusLabel(trackingOrder.order_status)}
             </p>
 
