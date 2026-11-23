@@ -39,6 +39,15 @@ function Storefront() {
   const [utr, setUtr] = useState('');
   const [utrSubmitting, setUtrSubmitting] = useState(false);
 
+  // Order Tracking states
+  const [trackingOrderId, setTrackingOrderId] = useState('');
+  const [trackingMobile, setTrackingMobile] = useState('');
+  const [trackingOrder, setTrackingOrder] = useState(null);
+  const [trackingMessage, setTrackingMessage] = useState('');
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingUtr, setTrackingUtr] = useState('');
+  const [trackingUtrSubmitting, setTrackingUtrSubmitting] = useState(false);
+
   useEffect(() => {
     loadProducts();
   }, []);
@@ -204,6 +213,10 @@ function Storefront() {
         setLastUpiOrder(null);
       }
 
+      // ग्राहक को Tracking के लिए Order ID और Mobile भी दिखाएँ
+      setTrackingOrderId(data.order_number);
+      setTrackingMobile(form.mobile.trim());
+
       setMessage(
         `🎉 आपका ऑर्डर सफलतापूर्वक सेव हो गया! Order ID: ${data.order_number} | कुल राशि: ₹${data.total} | भुगतान: ${form.payment === 'COD' ? 'Cash on Delivery' : 'UPI - भुगतान सत्यापन बाकी'}`
       );
@@ -222,10 +235,6 @@ function Storefront() {
     }
 
     const reference = utr.trim();
-
-    if (!reference) {
-      return setMessage('कृपया UTR / Transaction ID भरें।');
-    }
 
     if (reference.length < 6 || reference.length > 50) {
       return setMessage('कृपया सही Transaction ID दर्ज करें।');
@@ -274,6 +283,128 @@ function Storefront() {
     }
   }
 
+  // Customer Order Tracking
+  async function trackCustomerOrder() {
+    setTrackingMessage('');
+    setTrackingOrder(null);
+
+    if (!trackingOrderId.trim() || !trackingMobile.trim()) {
+      setTrackingMessage('कृपया Order ID और मोबाइल नंबर भरें।');
+      return;
+    }
+
+    if (!/^[6-9][0-9]{9}$/.test(trackingMobile.trim())) {
+      setTrackingMessage('कृपया सही 10 अंकों का मोबाइल नंबर लिखें।');
+      return;
+    }
+
+    if (!supabase) {
+      setTrackingMessage('Database कनेक्शन उपलब्ध नहीं है।');
+      return;
+    }
+
+    setTrackingLoading(true);
+
+    try {
+      const {data,error} = await supabase.rpc(
+        'track_customer_order',
+        {
+          p_order_number:trackingOrderId.trim(),
+          p_mobile:trackingMobile.trim()
+        }
+      );
+
+      if (error) {
+        console.error('Tracking error:',error);
+        setTrackingMessage('Tracking Error: ' + error.message);
+        return;
+      }
+
+      if (!data?.success || !data?.order) {
+        setTrackingMessage(
+          data?.message || 'ऑर्डर नहीं मिला। Order ID और मोबाइल जाँचें।'
+        );
+        return;
+      }
+
+      setTrackingOrder(data.order);
+      setTrackingUtr('');
+    } catch (error) {
+      console.error(error);
+      setTrackingMessage('तकनीकी समस्या आई। कृपया दोबारा कोशिश करें।');
+    } finally {
+      setTrackingLoading(false);
+    }
+  }
+
+  // Tracking page से UTR जमा करना
+  async function submitTrackingUtr() {
+    if (!trackingOrder) return;
+
+    const reference = trackingUtr.trim();
+
+    if (reference.length < 6 || reference.length > 50) {
+      setTrackingMessage('कृपया सही Transaction ID दर्ज करें।');
+      return;
+    }
+
+    if (!supabase) {
+      setTrackingMessage('Database कनेक्शन उपलब्ध नहीं है।');
+      return;
+    }
+
+    setTrackingUtrSubmitting(true);
+    setTrackingMessage('');
+
+    try {
+      const {data,error} = await supabase.rpc(
+        'submit_upi_reference',
+        {
+          p_order_number:trackingOrder.order_number,
+          p_mobile:trackingMobile.trim(),
+          p_reference:reference
+        }
+      );
+
+      if (error) {
+        console.error('Tracking UTR error:',error);
+        setTrackingMessage('UTR Error: ' + error.message);
+        return;
+      }
+
+      if (!data?.success) {
+        setTrackingMessage(data?.message || 'UTR जमा नहीं हुआ।');
+        return;
+      }
+
+      setTrackingMessage(
+        'UTR जमा हो गया। दुकान भुगतान की जाँच करेगी।'
+      );
+
+      setTrackingUtr('');
+      await trackCustomerOrder();
+
+    } catch (error) {
+      console.error(error);
+      setTrackingMessage('UTR जमा करते समय समस्या आई।');
+    } finally {
+      setTrackingUtrSubmitting(false);
+    }
+  }
+
+  function trackingStatusLabel(status) {
+    const labels = {
+      placed:'नया ऑर्डर',
+      confirmed:'ऑर्डर Confirmed',
+      packed:'सामान पैक हो गया',
+      out_for_delivery:'डिलीवरी के लिए निकल गया',
+      delivered:'डिलीवर हो गया',
+      cancelled:'ऑर्डर Cancelled'
+    };
+
+    return labels[status] || status;
+  }
+
   const upiLink = lastUpiOrder
     ? `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent(UPI_NAME)}&am=${encodeURIComponent(lastUpiOrder.total.toFixed(2))}&cu=INR&tn=${encodeURIComponent(lastUpiOrder.orderNumber)}`
     : '';
@@ -291,14 +422,29 @@ function Storefront() {
         </div>
       </div>
 
-      <a
-        className="whatsapp"
-        href={`https://wa.me/${WHATSAPP}`}
-        target="_blank"
-        rel="noreferrer"
-      >
-        WhatsApp
-      </a>
+      <div style={{
+        display:'flex',
+        gap:'8px',
+        alignItems:'center',
+        flexWrap:'wrap'
+      }}>
+        <a
+          className="whatsapp"
+          href="#tracking-panel"
+          style={{textDecoration:'none'}}
+        >
+          Track Order
+        </a>
+
+        <a
+          className="whatsapp"
+          href={`https://wa.me/${WHATSAPP}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          WhatsApp
+        </a>
+      </div>
     </header>
 
     <main>
@@ -408,6 +554,154 @@ function Storefront() {
         }
       </section>
 
+      {/* ORDER TRACKING SECTION */}
+      <section className="panel" id="tracking-panel">
+        <h2>📦 Track Your Order</h2>
+        <p>Order ID और ऑर्डर में दिया गया मोबाइल नंबर भरें।</p>
+
+        <div className="form-grid">
+          <input
+            placeholder="Order ID (जैसे CK-...)"
+            value={trackingOrderId}
+            onChange={e=>setTrackingOrderId(e.target.value)}
+          />
+
+          <input
+            placeholder="10 अंकों का मोबाइल नंबर"
+            value={trackingMobile}
+            onChange={e=>setTrackingMobile(e.target.value)}
+            inputMode="numeric"
+            maxLength={10}
+          />
+        </div>
+
+        <button
+          className="place-order"
+          onClick={trackCustomerOrder}
+          disabled={trackingLoading}
+        >
+          {trackingLoading ? 'ऑर्डर खोज रहे हैं...' : 'ऑर्डर ट्रैक करें'}
+        </button>
+
+        {trackingMessage && (
+          <p className="notice">{trackingMessage}</p>
+        )}
+
+        {trackingOrder && (
+          <div className="panel" style={{marginTop:'16px'}}>
+            <h3>आपके ऑर्डर की जानकारी</h3>
+
+            <p>
+              <b>Order ID:</b> {trackingOrder.order_number}
+            </p>
+
+            <p>
+              <b>ग्राहक:</b> {trackingOrder.customer_name}
+            </p>
+
+            <p>
+              <b>ऑर्डर समय:</b>{' '}
+              {trackingOrder.created_at
+                ? new Date(trackingOrder.created_at).toLocaleString('en-IN')
+                : 'उपलब्ध नहीं'}
+            </p>
+
+            <p>
+              <b>ऑर्डर स्थिति:</b>{' '}
+              {trackingStatusLabel(trackingOrder.order_status)}
+            </p>
+
+            <p>
+              <b>भुगतान तरीका:</b>{' '}
+              {trackingOrder.payment_method==='COD'
+                ? 'Cash on Delivery'
+                : 'UPI'}
+            </p>
+
+            <p>
+              <b>भुगतान स्थिति:</b>{' '}
+              {trackingOrder.payment_status==='paid'
+                ? 'Paid'
+                : 'Pending'}
+            </p>
+
+            <h4>सामान की सूची</h4>
+
+            {(trackingOrder.items || []).map((item,index) => (
+              <div className="bill-row" key={index}>
+                <span>
+                  {item.product_name} × {item.quantity}
+                </span>
+                <b>₹{item.line_total}</b>
+              </div>
+            ))}
+
+            <hr/>
+
+            <div className="bill-row">
+              <span>सामान का कुल</span>
+              <b>₹{trackingOrder.subtotal}</b>
+            </div>
+
+            <div className="bill-row">
+              <span>डिलीवरी</span>
+              <b>₹{trackingOrder.delivery_fee}</b>
+            </div>
+
+            <div className="bill-row grand-total">
+              <span>कुल भुगतान</span>
+              <b>₹{trackingOrder.total}</b>
+            </div>
+
+            {trackingOrder.payment_method==='UPI' &&
+              trackingOrder.payment_status!=='paid' && (
+                <div className="panel" style={{marginTop:'12px'}}>
+                  <h4>UPI Transaction Reference</h4>
+
+                  {trackingOrder.payment_reference ? (
+                    <>
+                      <p>
+                        <b>जमा किया गया UTR:</b>
+                        <br/>
+                        {trackingOrder.payment_reference}
+                      </p>
+                      <p className="fine-print">
+                        आपका UTR जमा है। भुगतान की जाँच दुकान द्वारा बाकी है।
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        भुगतान करने के बाद UPI ऐप की Transaction Details
+                        से UTR यहाँ जमा करें।
+                      </p>
+
+                      <input
+                        placeholder="UTR / Transaction ID"
+                        value={trackingUtr}
+                        onChange={e=>setTrackingUtr(e.target.value)}
+                        maxLength={50}
+                      />
+
+                      <button
+                        className="place-order"
+                        style={{marginTop:'10px'}}
+                        onClick={submitTrackingUtr}
+                        disabled={trackingUtrSubmitting}
+                      >
+                        {trackingUtrSubmitting
+                          ? 'जमा हो रहा है...'
+                          : 'UTR जमा करें'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+          </div>
+        )}
+      </section>
+
+      {/* CHECKOUT SECTION */}
       <section className="panel checkout-panel" id="checkout-panel">
         <h2>आपका कार्ट और ऑर्डर</h2>
 
@@ -449,6 +743,8 @@ function Storefront() {
             placeholder="10 अंकों का मोबाइल नंबर"
             value={form.mobile}
             onChange={e=>setForm({...form,mobile:e.target.value})}
+            inputMode="numeric"
+            maxLength={10}
           />
 
           <textarea
@@ -530,7 +826,7 @@ function Storefront() {
             </p>
 
             <input
-              placeholder="12 अंकों का UTR / Transaction ID"
+              placeholder="UTR / Transaction ID"
               value={utr}
               onChange={e=>setUtr(e.target.value)}
               maxLength={50}
@@ -575,6 +871,8 @@ function Storefront() {
       >
         दुकान का पता
       </a>
+      {' • '}
+      <a href="#tracking-panel">Track Order</a>
     </footer>
   </>;
 }
