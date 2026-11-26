@@ -93,7 +93,7 @@ function Storefront() {
     p.name.toLowerCase().includes(search.toLowerCase())
   );
   const subtotal = cart.reduce((sum,p)=>sum+Number(p.price)*p.qty,0);
-  const delivery = subtotal===0 || subtotal>=500 ? 0 : 20;
+  const delivery = subtotal===0 || subtotal>=800 ? 0 : 30;
   const total = subtotal+delivery;
 
   function changeQuantity(product,quantity) {
@@ -277,12 +277,19 @@ function Storefront() {
         <div>
           <span className="tag">CHIKHALI • 5 KM DELIVERY</span>
           <h2>रोज़मर्रा का सामान,<br/>अब घर बैठे मंगाएँ!</h2>
-          <p>आसान ऑर्डर • भरोसेमंद सेवा • चिखली में डिलीवरी</p>
+          <p>आसान ऑर्डर • भरोसेमंद सेवा • घर तक डिलीवरी</p>
         </div>
         <div className="hero-icon">🛒</div>
       </section>
 
-      <p className="notice">₹500 या उससे अधिक की खरीदारी पर डिलीवरी मुफ़्त। ₹500 से कम पर ₹20 डिलीवरी चार्ज।</p>
+      <p className="notice">₹800 या उससे अधिक की खरीदारी पर डिलीवरी मुफ़्त। ₹800 से कम पर ₹30 डिलीवरी चार्ज।</p>
+
+      <section className="panel" style={{marginTop:'14px'}}>
+        <h2>📍 हमारी डिलीवरी सेवा</h2>
+        <p><b>Chikhali और आसपास के गाँवों में 5 KM तक घरपोच डिलीवरी।</b></p>
+        <p>Mankopra • Barbadi • Sangalwadi • Kolwai • Manki • Borgaon • Pimpalgaon • Bhandegaon</p>
+        <p className="fine-print">डिलीवरी की उपलब्धता आपके पूरे पते और सड़क मार्ग के अनुसार जाँची जाएगी।</p>
+      </section>
 
       <section className="panel">
         <div className="section-heading"><h2>सामान चुनें</h2><span>{products.length} उत्पाद</span></div>
@@ -388,7 +395,7 @@ function Storefront() {
         <div className="form-grid">
           <input placeholder="आपका नाम" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/>
           <input placeholder="10 अंकों का मोबाइल नंबर" value={form.mobile} onChange={e=>setForm({...form,mobile:e.target.value})} inputMode="numeric" maxLength={10}/>
-          <textarea placeholder="पूरा डिलीवरी पता (चिखली के आसपास)" value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/>
+          <textarea placeholder="पूरा पता और गाँव का नाम लिखें" value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/>
           <input placeholder="अतिरिक्त निर्देश (वैकल्पिक)" value={form.note} onChange={e=>setForm({...form,note:e.target.value})}/>
         </div>
         <div className="payment-options">
