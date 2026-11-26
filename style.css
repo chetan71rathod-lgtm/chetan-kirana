@@ -834,3 +834,34 @@ footer a {
     font-size: 21px;
   }
 }
+
+/* CHETAN KIRANA - REAL GROCERY BANNER */
+
+.hero {
+  background-image:
+    linear-gradient(
+      90deg,
+      rgba(0, 83, 48, 0.12),
+      rgba(0, 83, 48, 0.02)
+    ),
+    url("https://gflyyomnmhiispqrqcig.supabase.co/storage/v1/object/public/product-images/wide_crisp_photorealistic_grocery_market_still_l.png") !important;
+
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  overflow: hidden;
+}
+
+.hero::before {
+  display: none !important;
+}
+
+.hero-icon {
+  display: none !important;
+}
+
+@media (max-width: 600px) {
+  .hero {
+    background-position: 58% center !important;
+  }
+}
